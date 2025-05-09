@@ -1,0 +1,48 @@
+name: Build GNNWorker
+
+permissions:
+  contents: write
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up cache
+        uses: actions/cache@v3
+        with:
+          path: ~/.julia
+          key: ${{ runner.os }}-julia-${{ hashFiles('**/Project.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-julia-
+
+      - name: Install Julia
+        uses: julia-actions/setup-julia@v1
+        with:
+          version: '1.11'
+
+      - name: Install dependencies
+        run: julia --project=./GNN -e 'using Pkg; Pkg.instantiate(); Pkg.precompile()'
+
+      - name: Build executable
+        run: bash GNN/scripts/build.sh
+
+      - name: Zip build
+        run: |
+          cd GNN/build
+          zip -r GNNWorker.zip GNNWorker
+
+      - name: Upload release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: GNN/build/GNNWorker.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
