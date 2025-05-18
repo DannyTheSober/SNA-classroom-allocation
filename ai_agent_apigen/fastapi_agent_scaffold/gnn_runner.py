@@ -4,13 +4,14 @@ import pandas as pd
 import pymongo
 import os
 model_path = os.path.join(os.getcwd(), "gnnworker", "assets", "model.bson")
-def generate_clusters(data: str):
+def generate_clusters(data: str, k:int):
     try:
         result = subprocess.run(
             [
                 os.path.join(os.getcwd(), "gnnworker", "bin", "GNNProject"),
                 "--stdin",
-                "--model-path=" + model_path
+                "--model-path=" + model_path,
+                "--k=" + str(k)
             ],
             input=data,
             text=True,
@@ -43,12 +44,20 @@ def run_gnn_pipeline():
         client = pymongo.MongoClient(MONGO_URI)
         db = client["sna_database"]
 
+
+
         df_weights = pd.DataFrame(list(db.sna_weights.find({}, {"_id": 0})))
         df_disrespect = pd.DataFrame(list(db.raw_disrespect.find({}, {"_id": 0}))).dropna()
         df_feedback = pd.DataFrame(list(db.raw_feedback.find({}, {"_id": 0}))).dropna()
         df_friendship = pd.DataFrame(list(db.raw_friendship.find({}, {"_id": 0}))).dropna()
         df_influence = pd.DataFrame(list(db.raw_influential.find({}, {"_id": 0}))).dropna()
         df_advice = pd.DataFrame(list(db.raw_advice.find({}, {"_id": 0}))).dropna()
+
+        n_students = db.sna_student_raw.count_documents({"Participant-ID": {"$ne": None}})
+        target_class_size = df_weights["classSize"][0]
+        n_classes = max(1, round(n_students / target_class_size))
+        k = max(5, min(n_students - 1, round(n_students / n_classes)))
+
 
         edges = {
             "disrespect": df_disrespect[['source','target']].to_numpy().tolist(),
@@ -68,7 +77,7 @@ def run_gnn_pipeline():
         ]
 
         payload = {"views": views}
-        cluster_df = generate_clusters(json.dumps(payload))
+        cluster_df = generate_clusters(json.dumps(payload), k)
 
         if cluster_df is None or cluster_df.empty:
             print("❌ No clusters returned from GNN")

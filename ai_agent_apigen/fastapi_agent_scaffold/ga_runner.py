@@ -44,7 +44,7 @@ def run_ga_allocation(
     df_clusters = df_clusters.rename(columns={"id": "student_id"})
     df_clusters["student_id"] = pd.to_numeric(df_clusters["student_id"], errors="coerce").astype(int)
     df_clusters["cluster"] = pd.to_numeric(df_clusters["cluster"], errors="coerce").astype(int)
-    K = df_clusters["cluster"].nunique()
+
 
     # Pull raw survey + performance
     df_raw = pd.DataFrame(list(db.sna_student_raw.find({}, {"Participant-ID": 1, perf_field: 1})))
@@ -67,6 +67,9 @@ def run_ga_allocation(
     perf_array = df["Perc_Academic"].values.astype(float)
     N = len(student_ids)
 
+    target_class_size = float(weights.get("classSize", 25))
+    K = max(1, round(N / target_class_size))
+
     # GA setup
     try:
         creator.create("FitnessMulti", base.Fitness, weights=(-1.0, 1.0))
@@ -81,7 +84,18 @@ def run_ga_allocation(
     def eval_assignment(ind):
         sizes = list(Counter(ind).values())
         target = float(weights.get("classSize", 25))
-        size_penalty = sum((s - target) ** 2 for s in sizes) / len(sizes)
+        min_size = max(2, target * 0.5)
+        max_size = target * 1.5
+
+        size_penalty = 0
+        for s in sizes:
+            size_penalty += 10 * ((s - target) ** 2)
+
+
+        used_clusters = set(ind)
+        if len(used_clusters) < K:
+            size_penalty += 1000 * (K - len(used_clusters))
+
 
         groups = {}
         for idx, g in enumerate(ind): groups.setdefault(g, []).append(idx)
@@ -89,7 +103,7 @@ def run_ga_allocation(
         worst_mean = float(np.min(class_means))
         # proportion changed from gnn to ga
         gnn_diff = sum(a != b for a, b in zip(ind, gnn_labels)) / len(ind)
-        gnn_penalty = 1.0 * gnn_diff
+        gnn_penalty = 0.3 * gnn_diff
 
         return size_penalty + gnn_penalty, worst_mean
 
@@ -101,7 +115,10 @@ def run_ga_allocation(
     np.random.seed(seed)
 
     # use gnn results as base population
-    gnn_labels = df_clusters.set_index("student_id").loc[student_ids]["cluster"].tolist()
+    unique_labels = list(set(df_clusters["cluster"]))
+    label_mapping = {orig: i % K for i, orig in enumerate(unique_labels)}
+    gnn_labels = [label_mapping[c] for c in df_clusters.set_index("student_id").loc[student_ids]["cluster"]]
+
     initial_population = [creator.Individual(list(gnn_labels)) for _ in range(pop_size)]
     pop = toolbox.select(initial_population, k=pop_size)
 
