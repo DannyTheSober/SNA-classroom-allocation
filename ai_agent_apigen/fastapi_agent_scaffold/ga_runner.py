@@ -25,8 +25,6 @@ def run_ga_allocation(
 
     # Load class size weight slider
     weights = db.sna_weights.find_one({}, {"_id": 0})
-    csw_pct = float(weights.get("classSize", 50))
-    csw = csw_pct / 100.0 
 
     # Build Participant-ID → Name map
     id_name_map = {}
@@ -81,9 +79,10 @@ def run_ga_allocation(
     toolbox.register("individual", tools.initRepeat, creator.Individual, toolbox.attr_group, n=N)
 
     def eval_assignment(ind):
-        sizes = np.array(list(Counter(ind).values()), dtype=float)
-        raw_balance = float(np.std(sizes))
-        size_balance = raw_balance * csw
+        sizes = list(Counter(ind).values())
+        target = float(weights.get("classSize", 25))
+        size_penalty = sum((s - target) ** 2 for s in sizes) / len(sizes)
+
         groups = {}
         for idx, g in enumerate(ind): groups.setdefault(g, []).append(idx)
         class_means = [np.mean(perf_array[idxs]) for idxs in groups.values()]
@@ -92,7 +91,7 @@ def run_ga_allocation(
         gnn_diff = sum(a != b for a, b in zip(ind, gnn_labels)) / len(ind)
         gnn_penalty = 1.0 * gnn_diff
 
-        return size_balance + gnn_penalty, worst_mean
+        return size_penalty + gnn_penalty, worst_mean
 
     toolbox.register("evaluate", eval_assignment)
     toolbox.register("mate", tools.cxTwoPoint)
